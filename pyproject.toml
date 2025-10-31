@@ -1,0 +1,12 @@
+[project]
+name = "tdd-autogen"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "autogen>=0.10.0",
+    "dotenv>=0.9.9",
+    "pyautogen>=0.10.0",
+]
+
