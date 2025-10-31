@@ -7,7 +7,7 @@ load_dotenv()
 
 class Config:
     # Paths e arquivos
-    WORKSPACE_PATH = os.path.join(os.path.dirname(__file__), "workspace")
+    WORKSPACE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workspace")
     TEST_FILE = "test_app.py"
     IMPLEMENTATION_MODULE = "app_code"
     
