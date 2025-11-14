@@ -117,22 +117,37 @@ class TDDOrchestrator:
             speaker_name = last_speaker.name if last_speaker else None
             content = last_msg.get("content", "")
             
-            # Fluxo: Planner → Tester → Executor → Developer → Executor → pytest
+            # Fluxo TDD:
+            # 1. Planner → Tester
             if speaker_name == "Planner":
                 return self.tester
+            
+            # 2. Tester envia código → Executor executa
             elif speaker_name == "Tester" and "```python" in content:
                 return self.executor
+            
+            # 3. Executor criou test_app.py → Developer
             elif speaker_name == "Executor" and "test_app.py" in content and "exitcode: 0" in content:
-                # Testes foram criados, chamar Developer
                 return self.developer
+            
+            # 4. Developer envia código → Executor executa
             elif speaker_name == "Developer" and "```python" in content:
                 return self.executor
+            
+            # 5. Executor criou app_code.py → chamar Runner (função helper) via mensagem
             elif speaker_name == "Executor" and "app_code.py" in content and "exitcode: 0" in content:
-                # Código criado, Executor deve rodar pytest (auto-reply)
+                # Injetar comando pytest
+                import os
+                if os.path.exists(os.path.join(self.workspace_dir, "test_app.py")):
+                    # Próximo ainda é Executor para rodar pytest
+                    self.executor.send("Agora execute:\n```sh\npytest workspace/test_app.py -v\n```", self.manager, request_reply=False)
                 return self.executor
-            elif "exitcode:" in content and ("FAILED" in content or "PASSED" in content or "ERROR" in content):
-                # Resultado de pytest, chamar Reviewer
+            
+            # 6. Resultado de pytest → Reviewer
+            elif speaker_name == "Executor" and "exitcode:" in content and ("test" in content.lower() or "passed" in content.lower() or "failed" in content.lower()):
                 return self.reviewer
+            
+            # 7. Reviewer → TERMINATE ou Developer corrige
             elif speaker_name == "Reviewer":
                 if "TERMINATE" in content:
                     return None
@@ -158,24 +173,6 @@ class TDDOrchestrator:
     
     def _setup_executor(self) -> autogen.UserProxyAgent:
         """Configurar agente executor"""
-        
-        def check_and_run_tests(recipient, messages, sender, config):
-            """Após criar app_code.py, executar pytest automaticamente"""
-            if not messages:
-                return False, None
-            
-            last_msg = messages[-1]
-            content = last_msg.get("content", "")
-            
-            # Se acabou de criar app_code.py com sucesso, rodar pytest
-            if "app_code.py" in content and "exitcode: 0" in content:
-                import os
-                test_file = os.path.join(self.workspace_dir, "test_app.py")
-                if os.path.exists(test_file):
-                    return True, "Execute os testes:\n```sh\npytest workspace/test_app.py -v\n```"
-            
-            return False, None
-        
         executor = autogen.UserProxyAgent(
             name="Executor",
             human_input_mode="NEVER",
@@ -185,14 +182,7 @@ class TDDOrchestrator:
                 "work_dir": self.workspace_dir,
                 "use_docker": False,
             },
-            system_message="Você executa código Python e comandos shell que recebe."
-        )
-        
-        # Registrar função para executar pytest automaticamente
-        executor.register_reply(
-            [autogen.Agent, None],
-            reply_func=check_and_run_tests,
-            position=0
+            system_message="Execute código Python e comandos shell."
         )
         
         return executor

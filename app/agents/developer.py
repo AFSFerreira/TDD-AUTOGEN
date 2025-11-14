@@ -27,12 +27,12 @@ Se os testes falharem:
 Você deve responder *apenas* com um único bloco de código Python que salva o arquivo.
 Não adicione nenhum texto antes ou depois do bloco de código.
 
-Exemplo de Resposta (para teste de soma):
+Exemplo de Resposta (IMPORTANTE: use aspas simples triplas):
 ```python
 import os
 os.makedirs('workspace', exist_ok=True)
-with open('workspace/app_code.py', 'w') as f:
-    f.write(\"""
+with open('workspace/app_code.py', 'w', encoding='utf-8') as f:
+    f.write('''
 def add(a: int, b: int) -> int:
     \"\"\"
     Soma dois números inteiros.
@@ -45,9 +45,12 @@ def add(a: int, b: int) -> int:
         int: Soma de a e b
     \"\"\"
     return a + b
-\""")
+\"\"\")
 print("✅ Código implementado em: workspace/app_code.py")
 ```
+
+CRÍTICO: Use aspas simples triplas (''') no f.write(), NÃO aspas duplas.
+Não use emojis no print (causam erro de encoding).
 """
 
 def validate_implementation(code: str) -> Optional[str]:

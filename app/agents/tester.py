@@ -21,12 +21,12 @@ Regras importantes:
 Você deve responder *apenas* com um único bloco de código Python que cria o arquivo de teste.
 Não adicione nenhum texto antes ou depois do bloco de código.
 
-Exemplo de Resposta:
+Exemplo de Resposta (IMPORTANTE: use aspas simples triplas):
 ```python
 import os
 os.makedirs('workspace', exist_ok=True)
-with open('workspace/test_app.py', 'w') as f:
-    f.write(\"""
+with open('workspace/test_app.py', 'w', encoding='utf-8') as f:
+    f.write('''
 import pytest
 from app_code import add
 
@@ -42,9 +42,11 @@ def test_add_zero():
     \"\"\"Testar soma com zero (elemento neutro)\"\"\"
     assert add(5, 0) == 5
     assert add(0, 5) == 5
-\""")
-print("✅ Testes criados em: workspace/test_app.py")
+''')
+print("Testes criados em: workspace/test_app.py")
 ```
+
+CRÍTICO: Use aspas simples triplas (''') no f.write(), NÃO aspas duplas.
 """
 
 def validate_tests(tests: str) -> Optional[str]:
