@@ -106,11 +106,47 @@ class TDDOrchestrator:
             except Exception as e:
                 logging.error(f"❌ Erro ao configurar logging para agente {agent.name}: {e}")
         
-        # Configurar chat em grupo
+        # Configurar chat em grupo com seleção manual
+        def custom_speaker_selection(last_speaker, groupchat):
+            """Seleciona próximo speaker seguindo fluxo TDD"""
+            messages = groupchat.messages
+            if not messages:
+                return self.planner
+            
+            last_msg = messages[-1]
+            speaker_name = last_speaker.name if last_speaker else None
+            content = last_msg.get("content", "")
+            
+            # Fluxo: Planner → Tester → Executor → Developer → Executor → pytest
+            if speaker_name == "Planner":
+                return self.tester
+            elif speaker_name == "Tester" and "```python" in content:
+                return self.executor
+            elif speaker_name == "Executor" and "test_app.py" in content and "exitcode: 0" in content:
+                # Testes foram criados, chamar Developer
+                return self.developer
+            elif speaker_name == "Developer" and "```python" in content:
+                return self.executor
+            elif speaker_name == "Executor" and "app_code.py" in content and "exitcode: 0" in content:
+                # Código criado, Executor deve rodar pytest (auto-reply)
+                return self.executor
+            elif "exitcode:" in content and ("FAILED" in content or "PASSED" in content or "ERROR" in content):
+                # Resultado de pytest, chamar Reviewer
+                return self.reviewer
+            elif speaker_name == "Reviewer":
+                if "TERMINATE" in content:
+                    return None
+                else:
+                    return self.developer
+            
+            # Default: Manager decide
+            return "auto"
+        
         self.groupchat = autogen.GroupChat(
             agents=self.agents,
             messages=[],
-            max_round=50
+            max_round=25,
+            speaker_selection_method=custom_speaker_selection
         )
         
         # Manager do chat em grupo
@@ -122,48 +158,61 @@ class TDDOrchestrator:
     
     def _setup_executor(self) -> autogen.UserProxyAgent:
         """Configurar agente executor"""
-        return autogen.UserProxyAgent(
+        
+        def check_and_run_tests(recipient, messages, sender, config):
+            """Após criar app_code.py, executar pytest automaticamente"""
+            if not messages:
+                return False, None
+            
+            last_msg = messages[-1]
+            content = last_msg.get("content", "")
+            
+            # Se acabou de criar app_code.py com sucesso, rodar pytest
+            if "app_code.py" in content and "exitcode: 0" in content:
+                import os
+                test_file = os.path.join(self.workspace_dir, "test_app.py")
+                if os.path.exists(test_file):
+                    return True, "Execute os testes:\n```sh\npytest workspace/test_app.py -v\n```"
+            
+            return False, None
+        
+        executor = autogen.UserProxyAgent(
             name="Executor",
             human_input_mode="NEVER",
             max_consecutive_auto_reply=10,
-            is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
+            is_termination_msg=lambda x: "TERMINATE" in x.get("content", ""),
             code_execution_config={
                 "work_dir": self.workspace_dir,
                 "use_docker": False,
             },
-            system_message="""
-            Você é o Executor. Você executa o código Python e os testes, reportando resultados.
-            
-            Seu papel:
-            1. Após o Tester criar testes, chame o Developer
-            2. Após o Developer criar/modificar código, execute os testes
-            3. Para executar testes, use:
-            ```sh
-            pytest workspace/test_app.py -v
-            ```
-            
-            Reporte o resultado completo dos testes para o grupo.
-            """
+            system_message="Você executa código Python e comandos shell que recebe."
         )
+        
+        # Registrar função para executar pytest automaticamente
+        executor.register_reply(
+            [autogen.Agent, None],
+            reply_func=check_and_run_tests,
+            position=0
+        )
+        
+        return executor
     
     def _get_manager_prompt(self) -> str:
         """Retorna prompt do manager com fluxo TDD"""
         return """
-        Você é o Orquestrador. Gerencie o fluxo TDD entre os agentes.
-        
-        Siga estritamente este fluxo:
-        1. Comece com o Planner para definir o plano
-        2. Chame o Tester para criar o primeiro teste
-        3. Após o Executor criar arquivo de teste, chame o Developer
-        4. Após o Executor criar arquivo de código, chame o Executor novamente
-        5. Analise resultado dos testes:
-           - Se FALHAREM: Developer corrige (volte ao passo 4)
-           - Se PASSAREM: Reviewer analisa
-        6. Analise resposta do Reviewer:
-           - Se sugerir mudanças: Developer refatora (volte ao passo 4)
-           - Se "TERMINATE": Trabalho concluído
-        
-        Não desvie deste fluxo.
+Você gerencia o ciclo TDD. Selecione o próximo agente seguindo esta ordem:
+
+1. Planner cria plano
+2. Tester envia código Python
+3. Executor EXECUTA código do Tester (o código cria test_app.py)
+4. Developer envia código Python  
+5. Executor EXECUTA código do Developer (o código cria app_code.py)
+6. Executor executa: pytest workspace/test_app.py -v
+7. Se FAILED: Developer → Executor → volte ao passo 6
+8. Se PASSED: Reviewer → TERMINATE se OK
+
+CRÍTICO: Após Tester ou Developer enviar código, o próximo SEMPRE é Executor.
+Executor deve responder após executar cada código/comando.
         """
     
     def run(self, specification: str) -> TDDState:
@@ -190,38 +239,30 @@ class TDDOrchestrator:
                 if f.endswith('.py'):
                     os.remove(os.path.join(self.workspace_dir, f))
         
-        # Executar fluxo TDD
-        for iteration in range(1, Config.MAX_ITERATIONS + 1):
-            state.update(iteration=iteration)
+        # Executar fluxo TDD - UMA ÚNICA VEZ
+        try:
+            logging.info("=" * 60)
+            logging.info("💬 INICIANDO CICLO TDD")
+            logging.info("=" * 60)
             
-            try:
-                # Iniciar chat com o grupo
-                logging.info("=" * 60)
-                logging.info(f"💬 INICIANDO ITERAÇÃO {iteration}")
-                logging.info("=" * 60)
-                
-                chat_response = self.executor.initiate_chat(
-                    self.manager,
-                    message=f"Implemente uma solução TDD para: {specification}"
-                )
-                
-                if not chat_response:
-                    logging.error("❌ Chat não produziu resposta")
-                    break
-                
-                if state.get("status") == "passed":
-                    logging.info("🎉 Ciclo TDD concluído com sucesso!")
-                    break
-                
-                # Aguardar antes da próxima iteração
-                if iteration < Config.MAX_ITERATIONS:
-                    logging.info(f"⏳ Aguardando 2s antes da iteração {iteration + 1}...")
-                    time.sleep(2)
+            chat_response = self.executor.initiate_chat(
+                self.manager,
+                message=f"Implemente uma solução TDD para: {specification}"
+            )
             
-            except Exception as e:
-                logging.error(f"❌ Erro na iteração {iteration}: {str(e)}")
-                state.update(status="error")
-                break
+            # Verificar se alguma mensagem contém TERMINATE
+            if self.groupchat.messages:
+                last_messages = self.groupchat.messages[-10:]  # Verificar últimas 10 mensagens
+                for msg in last_messages:
+                    content = msg.get("content", "")
+                    if "TERMINATE" in content:
+                        logging.info("🎉 Ciclo TDD concluído com sucesso! (TERMINATE recebido)")
+                        state.update(status="passed")
+                        break
+        
+        except Exception as e:
+            logging.error(f"❌ Erro no ciclo TDD: {str(e)}")
+            state.update(status="error")
         
         # Relatório final
         self._print_final_report(state)
@@ -233,7 +274,7 @@ class TDDOrchestrator:
         logging.info("📊 RELATÓRIO FINAL DO TDD")
         logging.info("=" * 60)
         logging.info(f"✅ Status: {state.get('status', 'unknown')}")
-        logging.info(f"🔢 Iterações: {state.get('iteration', 0)}")
+        logging.info(f"🔄 Mensagens no chat: {len(self.groupchat.messages)}")
         logging.info(f"📄 Implementação: {Config.WORKSPACE_PATH}/{Config.IMPLEMENTATION_MODULE}.py")
         logging.info(f"📄 Testes: {Config.WORKSPACE_PATH}/{Config.TEST_FILE}")
         
