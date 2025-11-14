@@ -200,7 +200,7 @@ class TDDOrchestrator:
                 logging.info(f"💬 INICIANDO ITERAÇÃO {iteration}")
                 logging.info("=" * 60)
                 
-                chat_response = self.manager.initiate_chat(
+                chat_response = self.executor.initiate_chat(
                     self.manager,
                     message=f"Implemente uma solução TDD para: {specification}"
                 )
@@ -255,11 +255,8 @@ def main():
 
     user_request = """
     Eu preciso de um código Python.
-    A tarefa é criar uma função chamada 'add(a, b)' que receba dois inteiros
-    e retorne a soma deles.
-    
-    Por favor, siga o processo TDD completo, incluindo testes para números positivos,
-    números negativos e zero.
+    A tarefa é criar uma função chamada 'knight_move(pos)' que receba uma string contendo uma casa do tabuleiro de xadrez
+    e retorne todas as casas que a peça pode ser movida a partir da posição informada.
     """
 
     orchestrator = TDDOrchestrator()
